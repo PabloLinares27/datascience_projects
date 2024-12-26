@@ -1,0 +1,287 @@
+---
+title: "Modelo de regresion lineal"
+author: "Pablo Maldonado"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Suprimir los warnings
+options(warn = -1)
+
+```
+
+-   Comenzamos importando nuestra base de datos de diamantes.
+
+```{r}
+library(readr)
+library(ggplot2)
+
+df <- read_csv('Diamonds Prices2022.csv')
+
+```
+
+-   Procedemos con el AED:
+
+```{r}
+# Comenzamos verificando cuales son los tipos de datos de nuestro df:
+
+tipos_datos(df)
+
+# Ahora visualicemos los boxplots de las variables numericas para identificar visualmente la presencia de outliers:
+
+aux <- sapply(df, is.numeric)
+df_num <- df[aux]
+
+# Visualizamos cuales son los histogramas/graficos de barras de las variables 
+mult_hist(df)
+
+# Ahora identificamos cuales son nuestras variables mas correlacionas, aquellas que tienen un coeficiente de correlacion mayor o igual 0.9
+
+altCorr_2(df)
+```
+
+-   Gracias a las gráficas de arriba, podemos identificar que tenemos algunas variables muy correlacionadas, por lo que procederemos a hacer un poco feature engineering
+
+```{r}
+# Si lo pensamos un poco, podemos identificar que x,y,z corresponden a las medidas del diamante y si multiplicamos las mismas, podremos obtener una nueva variable llamada volumen, lo cual nos ayuda en la reduccion de dimensionalidad:
+
+df['volumen'] <- df['x']*df['y']*df['z']
+
+# Aqui quitamos las columnas x,y,z para solo conservar la columna volumen:
+
+df_2 <- df[,-c(8,9,10)]
+
+# Ahora, verifiquemos nuevamente las correlaciones existentes con estos nuevos datos:
+
+altCorr_2(df_2)
+
+# Efectivamente desaparecieron esas correlaciones innecesarias, ahora procedemos con eliminar los datos atípicos para poder aplicar reduccion de dimensionalidad
+
+df_num <- df_2[,sapply(df_2, is.numeric)]
+
+# Observamos los box plot de cada variable para identificar si existen problemas de escala:
+
+boxplot(df_num, main = "Variables numéricas", 
+        col = "lightblue", border = "black", 
+        horizontal = F, las = 1, cex.axis = 0.7)
+
+
+# Al analizar el grafico, podemos notar que tenemos problemas de escala, por lo que procedemos a aplicar la estandarizacion, y realizamos de nuevo nuestro boxplot:
+
+df_scaled <- sapply(df_num,scale)
+
+boxplot(df_scaled, main = "Variables escaladas", 
+        col = "lightblue", border = "black", 
+        horizontal = F, las = 1, cex.axis = 0.7)
+```
+
+-   Ahora que hemos identificado la presencia de datos atípicos, procedemos a eliminarlos
+
+```{r}
+
+# Calcular la media y la matriz de covarianza de las columnas numéricas
+mean_values <- colMeans(df_scaled)
+cov_matrix <- cov(df_scaled)
+
+# Calcular la distancia de Mahalanobis
+maha <- mahalanobis(df_scaled, mean_values, cov_matrix)
+
+# Calculamos una prueba chi cuadrada para identificar los outliers
+p_values <- pchisq(maha, df=ncol(df_scaled)-1, lower.tail=FALSE)
+
+# Agregar las columnas al dataframe escalado
+jaja <- cbind(maha,p_values)
+res <- as.data.frame(cbind(df_scaled,jaja))
+
+# Ahora si quitamos los datos atípicos:
+
+filt <- res[res$p_values>0.01,]
+df_so <- filt[,c(1,2,3,4,5)]
+
+boxplot(df_so, main='Variables sin outliers', col = "lightblue", border="black")
+
+boxplot(df_scaled, main = "Variables escaladas", 
+        col = "lightblue", border = "black", 
+        horizontal = F, las = 1, cex.axis = 0.7)
+```
+
+-   Ahora realicemos una clusterizacion de los datos para ver si estan correctamente separados, comparando con los datos numericos iniciales vs los datos escaldos y sin outliers ¿?
+
+```{r}
+library(cluster)
+library(factoextra)
+
+
+vect_means <- colMeans(df_so)
+
+clust <- kmeans(df_so, centers = 3, nstart = 25)
+
+fviz_cluster(clust, data = df_so, main = 'Clusterización con datos escalados y sin outliers')
+
+clust_co <- kmeans(df_num, centers = 3, nstart = 25)
+
+fviz_cluster(clust_co, data = df_num, main = 'Clusterización sin escalar y con outliers')
+
+```
+
+-   Como podemos ver, obtenemos una clusterizacion mucho mas clara cuando realizamos un preprocesamiento en los datos, como el escalamiento, el feature engineering, y la eliminacion de datos atipicos. Ahora procederemos a aplicar componentes principales para realizar una reducción de dimensionalidad y proceder con los análisis predictivos (regresión lineal)
+
+```{r}
+df_pc <- princomp(df_so)
+
+summary(df_pc)
+
+loadings(df_pc)
+
+
+```
+
+-   Ahora procederemos a crear nuestros modelos de regresion lineal:
+
+```{r}
+
+# Dividir el conjunto de datos en entrenamiento, validación y prueba (80% - 10% - 10%)
+set.seed(123)
+
+n <- nrow(df_so)  # Número total de filas en tu conjunto de datos
+
+train_indices <- sample(1:n, size = 0.8 * n)  # 80% para entrenamiento
+validation_indices <- sample(setdiff(1:n, train_indices), size = 0.1 * n)  # 10% para validación
+test_indices <- setdiff(1:n, c(train_indices, validation_indices))  # 10% para test
+
+train_set <- df_so[train_indices, ]
+validation_set <- df_so[validation_indices, ]
+test_set <- df_so[test_indices, ]
+
+# Realizar PCA sobre el conjunto de entrenamiento
+df_pc_train <- princomp(train_set[, -which(names(train_set) == "price")])  # Excluimos "price" para PCA
+
+# Verificar las componentes principales
+summary(df_pc_train)
+
+# Crear un dataframe con las dos primeras componentes y la variable objetivo "price"
+train_pca <- cbind(df_pc_train$scores[, c("Comp.1", "Comp.2")], train_set$price)
+colnames(train_pca) <- c("Comp.1", "Comp.2", "price")
+
+# Crear el modelo de regresión usando las dos primeras componentes
+modelo_pca <- lm(price ~ Comp.1 + Comp.2, data = as.data.frame(train_pca))
+
+
+# Proyectar el conjunto de validación en las componentes principales
+df_pc_validation <- predict(df_pc_train, newdata = validation_set[, -which(names(validation_set) == "price")])
+
+# Predecir "price" en el conjunto de validación
+predicciones_pca <- predict(modelo_pca, newdata = as.data.frame(df_pc_validation[, c("Comp.1", "Comp.2")]))
+
+# Calcular el RMSE
+mse_pca <- mean((predicciones_pca - validation_set$price)^2)
+rmse_pca <- sqrt(mse_pca)
+cat("RMSE del modelo PCA en el conjunto de validación: ", rmse_pca)
+
+
+# Proyectar el conjunto de prueba en las componentes principales
+df_pc_test <- predict(df_pc_train, newdata = test_set[, -which(names(test_set) == "price")])
+
+# Predecir "price" en el conjunto de prueba
+predicciones_pca_test <- predict(modelo_pca, newdata = as.data.frame(df_pc_test[, c("Comp.1", "Comp.2")]))
+
+# Calcular el RMSE
+mse_pca_test <- mean((predicciones_pca_test - test_set$price)^2)
+rmse_pca_test <- sqrt(mse_pca_test)
+cat("RMSE del modelo PCA en el conjunto de prueba: ", rmse_pca_test)
+
+
+# Crear el modelo de regresión con las variables originales (volumen y carat)
+modelo_original <- lm(price ~ volumen + carat, data = train_set)
+
+
+# Predecir "price" en el conjunto de validación usando el modelo original
+predicciones_original <- predict(modelo_original, newdata = validation_set)
+
+# Calcular el RMSE
+mse_original <- mean((predicciones_original - validation_set$price)^2)
+rmse_original <- sqrt(mse_original)
+cat("RMSE del modelo con variables originales en el conjunto de validación: ", rmse_original)
+
+# Predecir "price" en el conjunto de prueba usando el modelo original
+predicciones_original_test <- predict(modelo_original, newdata = test_set)
+
+# Calcular el RMSE
+mse_original_test <- mean((predicciones_original_test - test_set$price)^2)
+rmse_original_test <- sqrt(mse_original_test)
+cat("RMSE del modelo con variables originales en el conjunto de prueba: ", rmse_original_test)
+
+```
+
+-   Ahora graficaremos los resultados de ambos modelos, para poder comparar con los datos originales
+
+```{r}
+
+# Predecir valores con el modelo PCA en el conjunto de prueba
+predicciones_pca_test <- predict(modelo_pca, newdata = as.data.frame(df_pc_test[, c("Comp.1", "Comp.2")]))
+
+# Predecir valores con el modelo con variables originales (volumen y carat)
+predicciones_original_test <- predict(modelo_original, newdata = test_set)
+
+# Crear un dataframe con las variables originales y las predicciones
+resultados <- data.frame(
+  volumen = test_set$volumen,
+  carat = test_set$carat,
+  predicciones_pca = predicciones_pca_test,
+  predicciones_original = predicciones_original_test
+)
+
+# Instalar y cargar ggplot2 si aún no lo has hecho
+# install.packages("ggplot2")
+library(ggplot2)
+
+# Crear la gráfica
+ggplot(resultados, aes(x = volumen, y = carat)) +
+  geom_point(aes(color = "Original Data"), alpha = 0.5) +  # Datos originales (volumen y carat)
+  geom_point(aes(x = predicciones_pca, y = predicciones_original, color = "Predicciones"), shape = 1) +  # Predicciones PCA
+  labs(title = "Comparación de Datos Originales y Predicciones de Modelos",
+       x = "Volumen",
+       y = "Carat",
+       color = "Leyenda") +
+  scale_color_manual(values = c("Original Data" = "blue", "Predicciones" = "red")) +
+  theme_minimal()
+
+# Crear un gráfico de dispersión para comparar predicciones vs valores reales
+ggplot(resultados, aes(x = test_set$price, y = predicciones_pca_test)) +
+  geom_point(aes(color = "PCA Model"), alpha = 0.5) +
+  geom_point(aes(x = test_set$price, y = predicciones_original_test, color = "Original Model"), alpha = 0.5) +
+  labs(title = "Comparación de Predicciones vs Valores Reales",
+       x = "Valores Reales de Price",
+       y = "Predicciones de Price",
+       color = "Modelo") +
+  scale_color_manual(values = c("PCA Model" = "blue", "Original Model" = "red")) +
+  theme_minimal()
+
+
+# Instalar y cargar ggplot2 si aún no lo has hecho
+# install.packages("ggplot2")
+library(ggplot2)
+
+# Crear la gráfica
+ggplot(resultados) +
+  # Puntos de los datos originales
+  geom_point(aes(x = volumen, y = carat, color = "Datos Originales"), alpha = 0.5) +  
+  # Puntos de las predicciones usando PCA
+  geom_point(aes(x = predicciones_pca, y = predicciones_pca, color = "Predicciones PCA"), shape = 1) +  
+  # Puntos de las predicciones usando las variables originales
+  geom_point(aes(x = predicciones_original, y = predicciones_original, color = "Predicciones Originales"), shape = 1) +  
+  # Etiquetas y título
+  labs(title = "Comparación de Datos Originales y Predicciones de Modelos",
+       x = "Volumen (X)",
+       y = "Carat (Y)",
+       color = "Leyenda") +
+  # Personalizar los colores
+  scale_color_manual(values = c("Datos Originales" = "blue", "Predicciones PCA" = "red", "Predicciones Originales" = "green")) +
+  theme_minimal()
+
+
+```
+
+Entonces concluimos que si queremos un modelo que sea más fácil de interpretar, entonces usemos el modelo que solamente usa las variables volumen y carat. En caso de que querramos que nuestras predicciones sean mas certeras, debemos de utilizar el modelo que utiliza las dos componentes principales de nuestros datos.
