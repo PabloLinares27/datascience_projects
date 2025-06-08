@@ -1,0 +1,1 @@
+Aqui en este repositorio tendrán acceso a códigos y análiis que suelo realizar en mis tiempos libres, o sobre cosas de interés como mi tesis sobre Machine Learning aplicado a los mercados bursátiles para así poder generar señales de compra, venta, o mantener ese activo.
